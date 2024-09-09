@@ -1,11 +1,7 @@
 [package]
-name = "sowon-rust"
+name = "png2rs"
 version = "0.1.0"
 edition = "2021"
 
-[workspace]
-members = ["png2rs"]
-
 [dependencies]
 image = "0.25.2"
-sdl2 = "0.37.0"

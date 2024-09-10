@@ -2,10 +2,16 @@ use image::GenericImageView;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelMasks};
+use sdl2::rect::Rect;
+use sdl2::render::{Texture, TextureCreator, WindowCanvas};
 use sdl2::surface::Surface;
+use sdl2::video::{Window, WindowContext};
 use std::path::Path;
 use std::time::Duration;
 
+const FPS: u32 = 60;
+const SPRITE_CHAR_WIDTH: u32 = 300 / 2;
+const SPRITE_CHAR_HEIGHT: u32 = 380 / 2;
 const CHAR_HEIGHT: u32 = 380 / 2;
 const CHAR_WIDTH: u32 = 300 / 2;
 const CHARS_COUNT: u32 = 8;
@@ -17,8 +23,104 @@ const MAIN_COLOR_B: u8 = 220;
 const PAUSE_COLOR_R: u8 = 220;
 const PAUSE_COLOR_G: u8 = 120;
 const PAUSE_COLOR_B: u8 = 120;
+const BACKGROUND_COLOR_R: u8 = 24;
+const BACKGROUND_COLOR_G: u8 = 24;
+const BACKGROUND_COLOR_B: u8 = 24;
+const WIGGLE_COUNT: usize = 3;
+const WIGGLE_DURATION: f32 = 0.4 / WIGGLE_COUNT as f32;
+const COLON_INDEX: usize = 10;
+
+fn load_png_as_texture<'a>(texture_creator: &'a TextureCreator<WindowContext>) -> Texture<'a> {
+    let filepath = "./digits.png";
+    let img = match image::open(&Path::new(&filepath)) {
+        Ok(img) => img,
+        Err(_) => {
+            eprintln!("Could not load file {}", filepath);
+            std::process::exit(1);
+        }
+    };
+
+    let (png_width, png_height) = img.dimensions();
+    let mut png_data = img.to_rgba8().into_raw();
+
+    let surface = Surface::from_data_pixelmasks(
+        png_data.as_mut_slice(),
+        png_width,
+        png_height,
+        png_width * 4,
+        &PixelMasks {
+            bpp: 32,
+            rmask: 0x000000FF,
+            gmask: 0x0000FF00,
+            bmask: 0x00FF0000,
+            amask: 0xFF000000,
+        },
+    )
+    .unwrap();
+
+    let mut digits_texture = texture_creator
+        .create_texture_from_surface(surface)
+        .unwrap();
+    digits_texture.set_color_mod(MAIN_COLOR_R, MAIN_COLOR_G, MAIN_COLOR_B);
+    digits_texture
+}
+
+fn initial_pen(
+    window: &Window,
+    pen_x: &mut i32,
+    pen_y: &mut i32,
+    user_scale: f32,
+    fit_scale: &mut f32,
+) {
+    let (w, h) = window.size();
+
+    let text_aspect_ratio = TEXT_WIDTH as f64 / TEXT_HEIGHT as f64;
+    let window_aspect_radio = w as f64 / h as f64;
+    *fit_scale = if text_aspect_ratio > window_aspect_radio {
+        w as f32 / TEXT_WIDTH as f32
+    } else {
+        h as f32 / TEXT_HEIGHT as f32
+    };
+
+    let effective_digit_width = (CHAR_WIDTH as f32 * user_scale * *fit_scale).floor() as i32;
+    let effective_digit_height = (CHAR_HEIGHT as f32 * user_scale * *fit_scale).floor() as i32;
+    *pen_x = w as i32 / 2 - effective_digit_width * CHARS_COUNT as i32 / 2;
+    *pen_y = h as i32 / 2 - effective_digit_height / 2;
+}
+
+fn render_digit_at(
+    renderer: &mut WindowCanvas,
+    texture: &Texture,
+    digit_index: usize,
+    wiggle_index: usize,
+    pen_x: &mut i32,
+    pen_y: &mut i32,
+    user_scale: f32,
+    fit_scale: f32,
+) {
+    let effective_digit_width = (CHAR_WIDTH as f32 * user_scale * fit_scale).floor() as i32;
+    let effective_digit_height = (CHAR_HEIGHT as f32 * user_scale * fit_scale).floor() as i32;
+    let src_rect = Rect::new(
+        (digit_index * CHAR_WIDTH as usize) as i32,
+        (wiggle_index * CHAR_HEIGHT as usize) as i32,
+        SPRITE_CHAR_WIDTH,
+        SPRITE_CHAR_HEIGHT,
+    );
+
+    let dst_rect = Rect::new(
+        *pen_x,
+        *pen_y,
+        effective_digit_width as u32,
+        effective_digit_height as u32,
+    );
+
+    renderer.copy(texture, src_rect, dst_rect).unwrap();
+    *pen_x += effective_digit_width;
+}
 
 pub fn main() {
+    let displayed_time = 0.0;
+
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
@@ -40,46 +142,13 @@ pub fn main() {
     sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "linear");
 
     let texture_creator = canvas.texture_creator();
+    let digits_texture = load_png_as_texture(&texture_creator);
 
-    let filepath = "./digits.png";
-    let img = match image::open(&Path::new(&filepath)) {
-        Ok(img) => img,
-        Err(_) => {
-            eprintln!("Could not load file {}", filepath);
-            std::process::exit(1);
-        }
-    };
-
-    let (png_width, png_height) = img.dimensions();
-    // let png = img.to_rgba8();
-    let mut png_data = img.to_rgba8().into_raw(); // Extract the raw Vec<u8>
-
-    let surface = Surface::from_data_pixelmasks(
-        png_data.as_mut_slice(),
-        png_width,
-        png_height,
-        png_width * 4,
-        &PixelMasks {
-            bpp: 32,
-            rmask: 0x000000FF,
-            gmask: 0x0000FF00,
-            bmask: 0x00FF0000,
-            amask: 0xFF000000,
-        },
-    )
-    .unwrap();
-
-    let mut texture = texture_creator
-        .create_texture_from_surface(surface)
-        .unwrap();
-
-    texture.set_color_mod(MAIN_COLOR_R, MAIN_COLOR_G, MAIN_COLOR_B);
-
-    canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut i = 0;
+    let user_scale = 1.0;
+    let wiggle_index = 0;
     'running: loop {
-        i = (i + 1) % 255;
+        // input begin
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -90,9 +159,117 @@ pub fn main() {
                 _ => {}
             }
         }
-        // The rest of the game loop goes here...
+        // input end
 
+        // render begin
+        canvas.set_draw_color(Color {
+            r: BACKGROUND_COLOR_R,
+            g: BACKGROUND_COLOR_G,
+            b: BACKGROUND_COLOR_B,
+            a: 255,
+        });
+        canvas.clear();
+        {
+            let mut pen_x = 0;
+            let mut pen_y = 0;
+            let mut fit_scale = 1.0;
+
+            initial_pen(
+                canvas.window(),
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                &mut fit_scale,
+            );
+
+            let hours = (displayed_time / 60.0 / 60.0) as usize;
+            render_digit_at(
+                &mut canvas,
+                &digits_texture,
+                hours / 10,
+                wiggle_index % WIGGLE_COUNT,
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                fit_scale,
+            );
+            render_digit_at(
+                &mut canvas,
+                &digits_texture,
+                hours % 10,
+                (wiggle_index + 1) % WIGGLE_COUNT,
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                fit_scale,
+            );
+            render_digit_at(
+                &mut canvas,
+                &digits_texture,
+                COLON_INDEX,
+                (wiggle_index + 1) % WIGGLE_COUNT,
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                fit_scale,
+            );
+
+            let minutes = (displayed_time / 60.0 % 60.0) as usize;
+            render_digit_at(
+                &mut canvas,
+                &digits_texture,
+                minutes / 10,
+                (wiggle_index + 2) % WIGGLE_COUNT,
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                fit_scale,
+            );
+            render_digit_at(
+                &mut canvas,
+                &digits_texture,
+                minutes % 10,
+                (wiggle_index + 3) % WIGGLE_COUNT,
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                fit_scale,
+            );
+            render_digit_at(
+                &mut canvas,
+                &digits_texture,
+                COLON_INDEX,
+                (wiggle_index + 1) % WIGGLE_COUNT,
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                fit_scale,
+            );
+
+            let seconds = (displayed_time % 60.0) as usize;
+            render_digit_at(
+                &mut canvas,
+                &digits_texture,
+                seconds / 10,
+                (wiggle_index + 4) % WIGGLE_COUNT,
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                fit_scale,
+            );
+            render_digit_at(
+                &mut canvas,
+                &digits_texture,
+                seconds % 10,
+                (wiggle_index + 5) % WIGGLE_COUNT,
+                &mut pen_x,
+                &mut pen_y,
+                user_scale,
+                fit_scale,
+            );
+        }
         canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+        // render end
+        ::std::thread::sleep(Duration::from_millis(1000 / FPS as u64));
     }
 }

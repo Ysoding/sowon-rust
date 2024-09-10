@@ -7,6 +7,7 @@ use sdl2::render::{Texture, TextureCreator, WindowCanvas};
 use sdl2::surface::Surface;
 use sdl2::video::{Window, WindowContext};
 use sdl2::TimerSubsystem;
+use std::borrow::{Borrow, BorrowMut};
 use std::path::Path;
 
 const FPS: u32 = 60;
@@ -309,6 +310,10 @@ pub fn main() {
                 user_scale,
                 fit_scale,
             );
+            canvas
+                .window_mut()
+                .set_title(format!("{:02}:{:02}:{:02} - sowon", hours, minutes, seconds).as_str())
+                .unwrap();
         }
         canvas.present();
         displayed_time += fps_dt.dt;

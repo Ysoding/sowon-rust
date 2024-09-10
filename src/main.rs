@@ -5,7 +5,9 @@ use sdl2::pixels::{Color, PixelMasks};
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, TextureCreator, WindowCanvas};
 use sdl2::surface::Surface;
+use sdl2::sys::SDL_GetPerformanceCounter;
 use sdl2::video::{Window, WindowContext};
+use sdl2::TimerSubsystem;
 use std::path::Path;
 use std::time::Duration;
 
@@ -118,10 +120,48 @@ fn render_digit_at(
     *pen_x += effective_digit_width;
 }
 
+struct FpsDeltaTime {
+    pub frame_delay: u32, // Frame delay in milliseconds
+    pub dt: f64,          // Delta time in seconds
+    pub last_time: u64,
+    timer_subsystem: TimerSubsystem,
+}
+
+impl FpsDeltaTime {
+    pub fn new(fps_cap: u32, timer_subsystem: TimerSubsystem) -> Self {
+        Self {
+            last_time: timer_subsystem.performance_counter(),
+            timer_subsystem,
+            frame_delay: 1000 / fps_cap,
+            dt: 0.0,
+        }
+    }
+
+    pub fn frame_start(&mut self) {
+        let now = self.timer_subsystem.performance_counter();
+        let elapsed = now - self.last_time;
+        self.dt = elapsed as f64 / self.timer_subsystem.performance_frequency() as f64;
+        self.last_time = now;
+    }
+
+    pub fn frame_end(&self) {
+        let now = self.timer_subsystem.performance_counter();
+        let elapsed = now - self.last_time;
+        let cap_frame_end = (((elapsed as f32) * 1000.0)
+            / (self.timer_subsystem.performance_frequency() as f32))
+            as u32;
+
+        if cap_frame_end < self.frame_delay {
+            self.timer_subsystem.delay(self.frame_delay - cap_frame_end);
+        }
+    }
+}
+
 pub fn main() {
-    let displayed_time = 0.0;
+    let mut displayed_time = 0.0;
 
     let sdl_context = sdl2::init().unwrap();
+    let timer_subsystem = sdl_context.timer().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
     let window = video_subsystem
@@ -147,7 +187,10 @@ pub fn main() {
     let mut event_pump = sdl_context.event_pump().unwrap();
     let user_scale = 1.0;
     let wiggle_index = 0;
+    let mut fps_dt = FpsDeltaTime::new(FPS, timer_subsystem);
+
     'running: loop {
+        fps_dt.frame_start();
         // input begin
         for event in event_pump.poll_iter() {
             match event {
@@ -269,7 +312,8 @@ pub fn main() {
             );
         }
         canvas.present();
-        // render end
-        ::std::thread::sleep(Duration::from_millis(1000 / FPS as u64));
+        displayed_time += fps_dt.dt;
+
+        fps_dt.frame_end();
     }
 }

@@ -2,14 +2,13 @@ use chrono::{Local, Timelike};
 use clap::{Parser, ValueEnum};
 use image::GenericImageView;
 use sdl2::event::Event;
-use sdl2::keyboard::{KeyboardUtil, Keycode, Mod};
+use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelMasks};
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, TextureCreator, WindowCanvas};
 use sdl2::surface::Surface;
 use sdl2::video::{FullscreenType, Window, WindowContext};
 use sdl2::TimerSubsystem;
-use std::borrow::Borrow;
 use std::path::Path;
 
 const FPS: u32 = 60;
@@ -229,8 +228,9 @@ pub fn main() {
     'running: loop {
         fps_dt.frame_start();
         // input begin
-        let keyboard_state = event_pump.keyboard_state();
-        for event in event_pump.poll_iter() {
+        let events: Vec<_> = event_pump.poll_iter().collect();
+
+        for event in events {
             match event {
                 Event::Quit { .. }
                 | Event::KeyDown {
@@ -239,6 +239,7 @@ pub fn main() {
                 } => break 'running,
 
                 Event::MouseWheel { y, .. } => {
+                    let keyboard_state = event_pump.keyboard_state();
                     if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LCtrl)
                         || keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RCtrl)
                     {

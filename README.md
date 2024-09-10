@@ -2,6 +2,8 @@
 
 > Use Rust clone from https://github.com/tsoding/sowon
 
+![](./res.gif)
+
 ## Usage
 
 ```sh

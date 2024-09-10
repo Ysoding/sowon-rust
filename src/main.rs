@@ -5,11 +5,9 @@ use sdl2::pixels::{Color, PixelMasks};
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, TextureCreator, WindowCanvas};
 use sdl2::surface::Surface;
-use sdl2::sys::SDL_GetPerformanceCounter;
 use sdl2::video::{Window, WindowContext};
 use sdl2::TimerSubsystem;
 use std::path::Path;
-use std::time::Duration;
 
 const FPS: u32 = 60;
 const SPRITE_CHAR_WIDTH: u32 = 300 / 2;
@@ -122,7 +120,7 @@ fn render_digit_at(
 
 struct FpsDeltaTime {
     pub frame_delay: u32, // Frame delay in milliseconds
-    pub dt: f64,          // Delta time in seconds
+    pub dt: f32,          // Delta time in seconds
     pub last_time: u64,
     timer_subsystem: TimerSubsystem,
 }
@@ -140,7 +138,7 @@ impl FpsDeltaTime {
     pub fn frame_start(&mut self) {
         let now = self.timer_subsystem.performance_counter();
         let elapsed = now - self.last_time;
-        self.dt = elapsed as f64 / self.timer_subsystem.performance_frequency() as f64;
+        self.dt = elapsed as f32 / self.timer_subsystem.performance_frequency() as f32;
         self.last_time = now;
     }
 
@@ -186,8 +184,9 @@ pub fn main() {
 
     let mut event_pump = sdl_context.event_pump().unwrap();
     let user_scale = 1.0;
-    let wiggle_index = 0;
+    let mut wiggle_index = 0;
     let mut fps_dt = FpsDeltaTime::new(FPS, timer_subsystem);
+    let mut wiggle_cooldown = WIGGLE_DURATION;
 
     'running: loop {
         fps_dt.frame_start();
@@ -313,6 +312,13 @@ pub fn main() {
         }
         canvas.present();
         displayed_time += fps_dt.dt;
+        // render end
+
+        if wiggle_cooldown <= 0.0 {
+            wiggle_index += 1;
+            wiggle_cooldown = WIGGLE_DURATION;
+        }
+        wiggle_cooldown -= fps_dt.dt;
 
         fps_dt.frame_end();
     }

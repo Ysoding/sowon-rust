@@ -1,13 +1,15 @@
+use chrono::{Local, Timelike};
+use clap::{Parser, ValueEnum};
 use image::GenericImageView;
 use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
+use sdl2::keyboard::{KeyboardUtil, Keycode, Mod};
 use sdl2::pixels::{Color, PixelMasks};
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, TextureCreator, WindowCanvas};
 use sdl2::surface::Surface;
-use sdl2::video::{Window, WindowContext};
+use sdl2::video::{FullscreenType, Window, WindowContext};
 use sdl2::TimerSubsystem;
-use std::borrow::{Borrow, BorrowMut};
+use std::borrow::Borrow;
 use std::path::Path;
 
 const FPS: u32 = 60;
@@ -30,6 +32,7 @@ const BACKGROUND_COLOR_B: u8 = 24;
 const WIGGLE_COUNT: usize = 3;
 const WIGGLE_DURATION: f32 = 0.4 / WIGGLE_COUNT as f32;
 const COLON_INDEX: usize = 10;
+const SCALE_FACTOR: f32 = 0.15;
 
 fn load_png_as_texture<'a>(texture_creator: &'a TextureCreator<WindowContext>) -> Texture<'a> {
     let filepath = "./digits.png";
@@ -59,10 +62,9 @@ fn load_png_as_texture<'a>(texture_creator: &'a TextureCreator<WindowContext>) -
     )
     .unwrap();
 
-    let mut digits_texture = texture_creator
+    let digits_texture = texture_creator
         .create_texture_from_surface(surface)
         .unwrap();
-    digits_texture.set_color_mod(MAIN_COLOR_R, MAIN_COLOR_G, MAIN_COLOR_B);
     digits_texture
 }
 
@@ -156,8 +158,37 @@ impl FpsDeltaTime {
     }
 }
 
+#[derive(Debug, ValueEnum, Clone)]
+enum Mode {
+    Ascending,
+    Countdown,
+    Clock,
+}
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    /// Start pause timer
+    #[arg(short = 'p', long, default_value_t = false)]
+    pause: bool,
+
+    /// Mode
+    #[arg(short = 'm', value_enum, long, default_value_t = Mode::Ascending)]
+    mode: Mode,
+
+    /// In Countdown mode, exit when done.
+    #[arg(short = 'e', long, default_value_t = false)]
+    exit_after_countdown: bool,
+
+    /// Countdown seconds
+    #[arg(required_if_eq("mode", "countdown"))]
+    seconds: Option<u32>,
+}
+
 pub fn main() {
-    let mut displayed_time = 0.0;
+    let args = Cli::parse();
+    let mut displayed_time = args.seconds.unwrap_or(0) as f32;
+    let mut paused = args.pause;
 
     let sdl_context = sdl2::init().unwrap();
     let timer_subsystem = sdl_context.timer().unwrap();
@@ -181,10 +212,16 @@ pub fn main() {
     sdl2::hint::set("SDL_RENDER_SCALE_QUALITY", "linear");
 
     let texture_creator = canvas.texture_creator();
-    let digits_texture = load_png_as_texture(&texture_creator);
+    let mut digits_texture = load_png_as_texture(&texture_creator);
+
+    if paused {
+        digits_texture.set_color_mod(PAUSE_COLOR_R, PAUSE_COLOR_G, PAUSE_COLOR_B);
+    } else {
+        digits_texture.set_color_mod(MAIN_COLOR_R, MAIN_COLOR_G, MAIN_COLOR_B);
+    }
 
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let user_scale = 1.0;
+    let mut user_scale = 1.0;
     let mut wiggle_index = 0;
     let mut fps_dt = FpsDeltaTime::new(FPS, timer_subsystem);
     let mut wiggle_cooldown = WIGGLE_DURATION;
@@ -192,6 +229,7 @@ pub fn main() {
     'running: loop {
         fps_dt.frame_start();
         // input begin
+        let keyboard_state = event_pump.keyboard_state();
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -199,6 +237,74 @@ pub fn main() {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
+
+                Event::MouseWheel { y, .. } => {
+                    if keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::LCtrl)
+                        || keyboard_state.is_scancode_pressed(sdl2::keyboard::Scancode::RCtrl)
+                    {
+                        if y > 0 {
+                            user_scale += SCALE_FACTOR * user_scale;
+                        } else if y < 0 {
+                            user_scale -= SCALE_FACTOR * user_scale;
+                        }
+                    }
+                }
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    ..
+                } => match keycode {
+                    Keycode::KpPlus | Keycode::Equals => {
+                        user_scale += SCALE_FACTOR * user_scale;
+                    }
+                    Keycode::KpMinus | Keycode::Minus => {
+                        user_scale -= SCALE_FACTOR * user_scale;
+                    }
+                    Keycode::Kp0 | Keycode::Num0 => {
+                        user_scale = 1.0;
+                    }
+                    Keycode::F5 => {
+                        displayed_time = args.seconds.unwrap_or(0) as f32;
+                        paused = args.pause;
+
+                        if paused {
+                            digits_texture.set_color_mod(
+                                PAUSE_COLOR_R,
+                                PAUSE_COLOR_G,
+                                PAUSE_COLOR_B,
+                            );
+                        } else {
+                            digits_texture.set_color_mod(MAIN_COLOR_R, MAIN_COLOR_G, MAIN_COLOR_B);
+                        }
+                    }
+                    Keycode::F11 => {
+                        let window_flags = canvas.window().window_flags();
+                        let window_type = FullscreenType::from_window_flags(window_flags);
+                        if window_type == FullscreenType::Desktop {
+                            canvas
+                                .window_mut()
+                                .set_fullscreen(FullscreenType::Off)
+                                .unwrap();
+                        } else {
+                            canvas
+                                .window_mut()
+                                .set_fullscreen(FullscreenType::Desktop)
+                                .unwrap();
+                        }
+                    }
+                    Keycode::SPACE => {
+                        paused = !paused;
+                        if paused {
+                            digits_texture.set_color_mod(
+                                PAUSE_COLOR_R,
+                                PAUSE_COLOR_G,
+                                PAUSE_COLOR_B,
+                            );
+                        } else {
+                            digits_texture.set_color_mod(MAIN_COLOR_R, MAIN_COLOR_G, MAIN_COLOR_B);
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -316,7 +422,6 @@ pub fn main() {
                 .unwrap();
         }
         canvas.present();
-        displayed_time += fps_dt.dt;
         // render end
 
         if wiggle_cooldown <= 0.0 {
@@ -325,6 +430,29 @@ pub fn main() {
         }
         wiggle_cooldown -= fps_dt.dt;
 
+        if !paused {
+            match args.mode {
+                Mode::Ascending => displayed_time += fps_dt.dt,
+                Mode::Countdown => {
+                    if displayed_time > 1e-6 {
+                        displayed_time -= fps_dt.dt;
+                    } else {
+                        displayed_time = 0.0;
+                        if args.exit_after_countdown {
+                            std::process::exit(0);
+                        }
+                    }
+                }
+                Mode::Clock => {
+                    let now = Local::now();
+                    let hours = now.hour() as f32;
+                    let minutes = now.minute() as f32;
+                    let seconds = now.second() as f32;
+
+                    displayed_time = seconds + (minutes * 60.0) + (hours * 60.0 * 60.0);
+                }
+            }
+        }
         fps_dt.frame_end();
     }
 }

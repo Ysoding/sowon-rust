@@ -7,5 +7,7 @@ edition = "2021"
 members = ["png2rs"]
 
 [dependencies]
+chrono = "0.4.38"
+clap = { version = "4.5.17", features = ["derive"] }
 image = "0.25.2"
 sdl2 = "0.37.0"
